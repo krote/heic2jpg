@@ -171,8 +171,31 @@ class HeicToJpgConverter:
             self.logger.error(f"Error converting HEIC to JPG: {e}")
             raise
     
+    def delete_drive_file(self, file_id: str, file_name: str) -> bool:
+        """Delete file from Google Drive"""
+        if not self.service:
+            raise RuntimeError("Not authenticated. Call authenticate() first.")
+        
+        try:
+            self.service.files().delete(fileId=file_id).execute()
+            self.logger.info(f"Deleted original HEIC file: {file_name}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error deleting file {file_name}: {e}")
+            return False
+    
+    def confirm_deletion(self, file_count: int) -> bool:
+        """Ask user confirmation for deleting original HEIC files"""
+        if file_count == 0:
+            return False
+        
+        print(f"\n{file_count} HEIC files have been successfully converted to JPG.")
+        response = input("Do you want to delete the original HEIC files from Google Drive? (y/N): ").strip().lower()
+        return response in ['y', 'yes']
+    
     def process_files(self, output_dir: str = 'converted', quality: int = 85, 
-                     max_size: Tuple[int, int] = (1920, 1080), folder_id: Optional[str] = None):
+                     max_size: Tuple[int, int] = (1920, 1080), folder_id: Optional[str] = None,
+                     auto_delete: bool = False):
         """Process all HEIC files and convert to JPG"""
         if not self.service:
             self.authenticate()
@@ -188,6 +211,8 @@ class HeicToJpgConverter:
             return
         
         processed_count = 0
+        processed_files = []
+        
         for file_info in heic_files:
             try:
                 file_name = file_info['name']
@@ -224,12 +249,25 @@ class HeicToJpgConverter:
                 )
                 
                 processed_count += 1
+                processed_files.append((file_id, file_name))
                 
             except Exception as e:
                 self.logger.error(f"Error processing {file_name}: {e}")
                 continue
         
         self.logger.info(f"Successfully processed {processed_count} files")
+        
+        # Ask for deletion confirmation
+        if processed_files:
+            should_delete = auto_delete or self.confirm_deletion(len(processed_files))
+            
+            if should_delete:
+                deleted_count = 0
+                for file_id, file_name in processed_files:
+                    if self.delete_drive_file(file_id, file_name):
+                        deleted_count += 1
+                
+                self.logger.info(f"Deleted {deleted_count} original HEIC files from Google Drive")
 
 def main():
     config = Config()
@@ -241,6 +279,7 @@ def main():
     parser.add_argument('--max-height', type=int, default=config.default_max_height, help='Maximum height')
     parser.add_argument('--folder-id', help='Google Drive folder ID to process')
     parser.add_argument('--credentials', default=config.credentials_file, help='Google API credentials file')
+    parser.add_argument('--auto-delete', action='store_true', help='Automatically delete original HEIC files without confirmation')
     
     args = parser.parse_args()
     
@@ -251,7 +290,8 @@ def main():
             output_dir=args.output,
             quality=args.quality,
             max_size=(args.max_width, args.max_height),
-            folder_id=args.folder_id
+            folder_id=args.folder_id,
+            auto_delete=args.auto_delete
         )
     except Exception as e:
         print(f"Error: {e}")
